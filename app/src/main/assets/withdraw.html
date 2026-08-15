@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="id" translate="no">
+<head>
+  <meta charset="UTF-8">
+  <meta name="google" content="notranslate">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kasir & Penarikan</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background: #f0f2f5; display: flex; flex-direction: column; min-height: 100vh; }
+    
+    /* Header Saldo di Atas */
+    .balance-card { 
+      background: #28a745; 
+      color: white; 
+      padding: 15px 20px; 
+      text-align: center; 
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    .balance-label { font-size: 13px; opacity: 0.9; }
+    .balance-amount { font-size: 26px; font-weight: bold; margin: 4px 0; }
+    
+    /* Container Web Penarikan di Bawah */
+    .withdraw-container { 
+      flex: 1; 
+      width: 100%; 
+      padding: 10px; 
+      display: flex;
+      flex-direction: column;
+    }
+    
+    iframe { 
+      width: 100%; 
+      height: 520px; 
+      border: 1px solid #ddd; 
+      border-radius: 12px; 
+      background: white;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Card Informasi Saldo -->
+  <div class="balance-card">
+    <button onclick="window.location.href='index.html'" style="float: left; padding: 6px 12px; background: rgba(255,255,255,0.25); color: white; border: 1px solid rgba(255,255,255,0.6); border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 12px;">⬅ Kembali ke Kasir</button>
+    <div style="clear: both;"></div>
+    <div class="balance-label" style="margin-top: 4px;">Saldo SairiBot Anda</div>
+    <div class="balance-amount" id="balanceDisplay">Rp ...</div>
+  </div>
+
+  <!-- Embed Web Penarikan -->
+  <div class="withdraw-container">
+    <iframe src="https://api.sairibot.my.id/withdraw" title="Halaman Penarikan"></iframe>
+  </div>
+
+<script>
+  const apiKey = "SKY_be1b80ec1d164337";
+
+  // Mengambil saldo otomatis dari API SairiBot
+  async function fetchBalance() {
+    try {
+      const targetUrl = `https://api.sairibot.my.id/api/balance?apikey=${apiKey}`;
+      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+      const res = await fetch(proxyUrl);
+      const data = await res.json();
+      
+      const balance = data.balance || data.data?.balance || 0;
+      document.getElementById('balanceDisplay').innerText = "Rp " + Number(balance).toLocaleString('id-ID');
+    } catch (e) {
+      document.getElementById('balanceDisplay').innerText = "Gagal memuat";
+    }
+  }
+
+  fetchBalance();
+  // Refresh saldo otomatis setiap 10 detik
+  setInterval(fetchBalance, 10000);
+</script>
+</body>
+</html>

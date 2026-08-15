@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kasir QRIS + Riwayat Sinkron</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; margin: 0; padding: 15px; display: flex; justify-content: center; }
+    .container { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 15px; }
+    .card { background: white; padding: 20px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); text-align: center; }
+    h2, h3 { margin-top: 0; color: #1c1e21; }
+    input { width: 100%; padding: 12px; border: 1px solid #ccd0d5; border-radius: 8px; font-size: 18px; font-weight: bold; margin-bottom: 12px; outline: none; }
+    .btn-main { width: 100%; padding: 14px; background: #28a745; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; }
+    
+    #resultArea { display: none; margin-top: 15px; border-top: 2px dashed #e4e6eb; padding-top: 15px; }
+    .qris-box img { width: 100%; max-width: 240px; border: 1px solid #ddd; border-radius: 12px; margin: 10px 0; }
+    .btn-wa { width: 100%; padding: 12px; background: #25d366; color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: bold; cursor: pointer; margin-top: 10px; }
+
+    /* UI Riwayat Transaksi */
+    .history-card { background: white; padding: 20px; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+    .history-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+    .btn-refresh { padding: 6px 12px; background: #007bff; color: white; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; font-weight: bold; }
+    
+    .history-list { display: flex; flex-direction: column; gap: 10px; max-height: 300px; overflow-y: auto; text-align: left; }
+    .history-item { display: flex; justify-content: space-between; align-items: center; padding: 12px; border-radius: 10px; border: 1px solid #eee; background: #fafafa; }
+    .inv-details { display: flex; flex-direction: column; gap: 3px; }
+    .inv-id { font-weight: bold; font-size: 14px; color: #333; }
+    .inv-date { font-size: 11px; color: #888; }
+    .inv-amount { font-weight: bold; font-size: 15px; color: #d63384; }
+
+    /* Badge Status */
+    .badge { padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: bold; text-transform: uppercase; }
+    .badge-pending { background: #fff3cd; color: #856404; }
+    .badge-paid { background: #d4edda; color: #155724; }
+    .badge-expired { background: #f8d7da; color: #721c24; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <!-- Card Generator QRIS -->
+  <div class="card">
+    <h2>💳 Kasir QRIS SairiBot</h2>
+    <input type="number" id="amount" placeholder="Nominal (Contoh: 1000)" value="1000">
+    <button class="btn-main" onclick="generateQueries()">Generate Queries</button>
+    <button class="btn-main" style="background: #007bff; margin-top: 10px;" onclick="window.location.href='withdraw.html'">💰 Ke Halaman Tarik Saldo</button>
+    <div id="loading" style="display:none; margin-top:10px; font-weight:bold; color:#007bff;">Membuat QRIS...</div>
+
+    <div id="resultArea">
+      <div id="activeBadge" class="badge badge-pending" style="display:inline-block; font-size:13px; padding:6px 14px;">PENDING</div>
+      <div class="qris-box"><img id="qrisImg" src="" alt="QRIS"></div>
+      <h3 id="totalDisplay" style="color: #d63384; margin: 5px 0;">Rp 0</h3>
+      <div style="font-size:12px; color:#666;">ID: <strong id="invIdDisplay">-</strong></div>
+
+      <button class="btn-wa" onclick="shareWhatsApp()">💬 Kirim Link Pembayaran ke WA</button>
+    </div>
+  </div>
+
+  <!-- Card Riwayat Transaksi -->
+  <div class="history-card">
+    <div class="history-header">
+      <h3 style="margin:0;">📋 Riwayat Transaksi</h3>
+      <button class="btn-refresh" onclick="syncAllHistory()">🔄 Cek Status Server</button>
+    </div>
+    <div id="historyList" class="history-list">
+      <div style="text-align:center; color:#888; font-size:13px; padding:10px;">Belum ada riwayat transaksi.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let currentQrisBase64 = "";
+  let currentTotal = 0;
+  let currentInvId = "";
+  const apiKey = "SKY_be1b80ec1d164337";
+
+  // Ambil data riwayat dari penyimpanan HP (localStorage)
+  let transactions = JSON.parse(localStorage.getItem('sairibot_txs') || '[]');
+
+  window.onload = () => {
+    renderHistory();
+    syncAllHistory();
+    // Otomatis sinkronkan riwayat dengan server SairiBot setiap 10 detik
+    setInterval(syncAllHistory, 10000);
+  };
+
+  async function generateQueries() {
+    const amount = document.getElementById('amount').value.trim();
+    if (!amount || amount < 100) { alert("Masukkan nominal yang valid!"); return; }
+
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('resultArea').style.display = 'none';
+
+    const targetUrl = `https://api.sairibot.my.id/api/invoice?apikey=${apiKey}&amount=${amount}`;
+    const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+
+    try {
+      const res = await fetch(proxyUrl);
+      const data = await res.json();
+      document.getElementById('loading').style.display = 'none';
+
+      if (data.success || data.qris_image || data.invoice_id) {
+        currentQrisBase64 = data.qris_image;
+        currentTotal = data.total;
+        currentInvId = data.invoice_id;
+
+        document.getElementById('qrisImg').src = data.qris_image;
+        document.getElementById('totalDisplay').innerText = "Rp " + Number(data.total).toLocaleString('id-ID');
+        document.getElementById('invIdDisplay').innerText = data.invoice_id;
+        document.getElementById('activeBadge').className = 'badge badge-pending';
+        document.getElementById('activeBadge').innerText = 'PENDING';
+
+        // Tambah transaksi baru ke riwayat lokal
+        const newTx = {
+          id: data.invoice_id,
+          amount: data.total,
+          status: 'pending',
+          time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+        };
+        
+        // Simpan agar tidak ada duplikat ID
+        transactions = transactions.filter(t => t.id !== newTx.id);
+        transactions.unshift(newTx);
+        saveAndRender();
+
+        document.getElementById('resultArea').style.display = 'block';
+      } else {
+        alert("Gagal membuat QRIS.");
+      }
+    } catch (e) {
+      document.getElementById('loading').style.display = 'none';
+      alert("Terjadi masalah koneksi.");
+    }
+  }
+
+  // Sinkronkan seluruh riwayat dengan server api.sairibot.my.id
+  async function syncAllHistory() {
+    if (transactions.length === 0) return;
+
+    for (let tx of transactions) {
+      // Hanya cek status untuk transaksi yang masih pending
+      if (tx.status === 'pending') {
+        try {
+          const targetUrl = `https://api.sairibot.my.id/api/invoice/status?apikey=${apiKey}&invoice_id=${tx.id}`;
+          const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+          const res = await fetch(proxyUrl);
+          const data = await res.json();
+          
+          const serverStatus = (data.status || data.data?.status || "").toLowerCase();
+
+          if (serverStatus === 'paid' || serverStatus === 'success') {
+            tx.status = 'paid';
+            if (tx.id === currentInvId) {
+              document.getElementById('activeBadge').className = 'badge badge-paid';
+              document.getElementById('activeBadge').innerText = 'PAID / LUNAS';
+            }
+          } else if (serverStatus === 'expired') {
+            tx.status = 'expired';
+            if (tx.id === currentInvId) {
+              document.getElementById('activeBadge').className = 'badge badge-expired';
+              document.getElementById('activeBadge').innerText = 'EXPIRED';
+            }
+          }
+        } catch (e) {
+          console.log("Memeriksa status server...");
+        }
+      }
+    }
+    saveAndRender();
+  }
+
+  function saveAndRender() {
+    localStorage.setItem('sairibot_txs', JSON.stringify(transactions));
+    renderHistory();
+  }
+
+  function renderHistory() {
+    const listEl = document.getElementById('historyList');
+    if (transactions.length === 0) {
+      listEl.innerHTML = `<div style="text-align:center; color:#888; font-size:13px; padding:10px;">Belum ada riwayat transaksi.</div>`;
+      return;
+    }
+
+    listEl.innerHTML = transactions.map(tx => {
+      let badgeClass = 'badge-pending';
+      let statusText = 'pending';
+
+      if (tx.status === 'paid') { badgeClass = 'badge-paid'; statusText = 'paid'; }
+      else if (tx.status === 'expired') { badgeClass = 'badge-expired'; statusText = 'expired'; }
+
+      return `
+        <div class="history-item">
+          <div class="inv-details">
+            <span class="inv-id">${tx.id}</span>
+            <span class="inv-date">${tx.time} • <strong class="inv-amount">Rp ${Number(tx.amount).toLocaleString('id-ID')}</strong></span>
+          </div>
+          <span class="badge ${badgeClass}">${statusText}</span>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function shareWhatsApp() {
+    const link = `https://iqbalcraftmc.github.io/bayar.github.io/?inv=${encodeURIComponent(currentInvId)}&total=${encodeURIComponent(currentTotal)}`;
+    const pesan = `Halo! Silakan selesaikan pembayaran QRIS kamu via link resmi berikut:\n\n${link}\n\nTerima kasih!`;
+    window.open(`https://wa.me/?text=${encodeURIComponent(pesan)}`, '_blank');
+  }
+</script>
+
+</body>
+</html>
